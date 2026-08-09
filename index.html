@@ -380,57 +380,96 @@
         };
 
         window.triggerTextCopy = function() {
-            const compiled = getCompiledMonthlyData();
-            
-            let text = `✨ 仙女小金庫 - 月報歷史回顧 ✨\n`;
-            text += `----------------------------------\n`;
-            text += `📅 報表產出時間：${new Date().toLocaleDateString('zh-TW')}\n\n`;
+    const compiled = getCompiledMonthlyData();
 
-            compiled.forEach(([month, data]) => {
-                text += `【 📅 ${month} 財富戰報 】\n`;
-                text += `🌸 預估淨利：+$${data.pro.toLocaleString()} TWD\n`;
-                text += `🛍️ 總銷售額：$${data.rev.toLocaleString()} TWD\n`;
-                text += `💗 各級別銷貨：\n`;
-                SALES_LEVELS.forEach(level => {
-                    text += `   ・${level}：$${(data.levelRevenue[level] || 0).toLocaleString()} TWD\n`;
-                });
-                if (data.uncategorizedRevenue > 0) {
-                    text += `   ・未分類：$${data.uncategorizedRevenue.toLocaleString()} TWD\n`;
-                }
-                text += `📦 進貨支出：$${data.cost.toLocaleString()} TWD\n`;
-                
-                const mTop = Object.entries(data.items).sort((a,b) => b[1] - a[1]).slice(0, 3);
-                if (mTop.length > 0) {
-                    text += `🔥 熱銷品項：\n`;
-                    mTop.forEach(([name, qty], idx) => {
-                        text += `   ${idx + 1}. ${name} (${qty}件)\n`;
-                    });
-                }
-                text += `\n`;
-            });
-            text += `----------------------------------\n`;
-            text += `💎 仙女認真賺錢的樣子最美麗！💎`;
+    // 取得目前月份，例如：2026-08
+    const now = new Date();
+    const currentMonth =
+        `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 
-            const tempTextArea = document.createElement("textarea");
-            tempTextArea.value = text;
-            tempTextArea.style.position = "fixed"; 
-            document.body.appendChild(tempTextArea);
-            tempTextArea.focus();
-            tempTextArea.select();
-            
-            try {
-                const successful = document.execCommand('copy');
-                if (successful) {
-                    fairyToast("已複製純文字月報！快去貼給夥伴吧 💖");
-                } else {
-                    fairyToast("複製失敗，請手動複製");
-                }
-            } catch (err) {
-                fairyToast("瀏覽器不支援一鍵複製");
-            }
-            document.body.removeChild(tempTextArea);
-            window.closeExportModal();
-        };
+    // 只尋找當月報表
+    const currentReport = compiled.find(
+        ([month]) => month === currentMonth
+    );
+
+    // 當月沒有資料時顯示提醒
+    if (!currentReport) {
+        fairyToast("本月目前還沒有可複製的報表資料喔！✨");
+        window.closeExportModal();
+        return;
+    }
+
+    const [month, data] = currentReport;
+
+    let text = `✨ 仙女小金庫－本月財富戰報 ✨\n`;
+    text += `----------------------------------\n`;
+    text += `📅 報表產出時間：${now.toLocaleDateString("zh-TW")}\n\n`;
+
+    text += `【 📅 ${month} 財富戰報 】\n`;
+    text += `🌸 預估淨利：+$${data.pro.toLocaleString()} TWD\n`;
+    text += `🛍️ 總銷售額：$${data.rev.toLocaleString()} TWD\n`;
+
+    text += `💗 各級別銷貨：\n`;
+
+    SALES_LEVELS.forEach(level => {
+        const amount = data.levelRevenue[level] || 0;
+
+        text +=
+            `   ・${level}：$${amount.toLocaleString()} TWD\n`;
+    });
+
+    // 舊資料缺少銷售級別時才顯示
+    if (data.uncategorizedRevenue > 0) {
+        text +=
+            `   ・未分類：$${data.uncategorizedRevenue.toLocaleString()} TWD\n`;
+    }
+
+    text += `📦 進貨支出：$${data.cost.toLocaleString()} TWD\n`;
+
+    // 顯示當月熱銷商品前三名
+    const topItems = Object.entries(data.items)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 3);
+
+    if (topItems.length > 0) {
+        text += `🔥 熱銷品項：\n`;
+
+        topItems.forEach(([name, qty], index) => {
+            text += `   ${index + 1}. ${name}（${qty}件）\n`;
+        });
+    }
+
+    text += `\n----------------------------------\n`;
+    text += `💎 仙女認真賺錢的樣子最美麗！💎`;
+
+    // 建立暫時文字框進行複製
+    const tempTextArea = document.createElement("textarea");
+
+    tempTextArea.value = text;
+    tempTextArea.style.position = "fixed";
+    tempTextArea.style.opacity = "0";
+
+    document.body.appendChild(tempTextArea);
+
+    tempTextArea.focus();
+    tempTextArea.select();
+
+    try {
+        const successful = document.execCommand("copy");
+
+        if (successful) {
+            fairyToast("已複製本月報表！快去貼給夥伴吧 💖");
+        } else {
+            fairyToast("複製失敗，請手動複製");
+        }
+    } catch (error) {
+        console.error(error);
+        fairyToast("瀏覽器不支援一鍵複製");
+    }
+
+    document.body.removeChild(tempTextArea);
+    window.closeExportModal();
+};
 
         function renderDashboard() {
             const warningBanner = document.getElementById('guest-warning-banner');
