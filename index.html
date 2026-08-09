@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>仙女小金庫 1.2</title>
+    <title>仙女小金庫 1.3</title>
     <!-- Tailwind CSS & Lucide Icons -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
@@ -72,6 +72,9 @@
         let priceViewLevel = '皇家';
         let priceViewCurr = 'TWD';
         let searchQuery = "";
+
+        // --- 銷貨級別統計順序（月報、CSV、純文字共用） ---
+        const SALES_LEVELS = ["零售", "1+1", "VIP", "實習", "三級零售", "三級加盟", "二級", "一級", "皇家"];
 
         let unsubscribeSales = null;
         let unsubscribePurchases = null;
@@ -174,14 +177,14 @@
         });
 
         window.toggleAuthMode = function() {
-            const isLogin = document.getElementById('auth-title').innerText === '仙女小金庫 1.2 登入';
+            const isLogin = document.getElementById('auth-title').innerText === '仙女小金庫 1.3 登入';
             if (isLogin) {
                 document.getElementById('auth-title').innerText = '建立仙女小金庫帳號';
                 document.getElementById('auth-desc').innerText = '註冊專屬電子信箱與密碼，多裝置暢行記帳！';
                 document.getElementById('auth-btn-text').innerText = '立即註冊並同步 💖';
                 document.getElementById('auth-switch-text').innerText = '已經有帳號了？點此回登入';
             } else {
-                document.getElementById('auth-title').innerText = '仙女小金庫 1.2 登入';
+                document.getElementById('auth-title').innerText = '仙女小金庫 1.3 登入';
                 document.getElementById('auth-desc').innerText = '輸入信箱與密碼，即可立刻登入雲端金庫！';
                 document.getElementById('auth-btn-text').innerText = '立即登入小金庫 ✨';
                 document.getElementById('auth-switch-text').innerText = '還沒有雲端帳號？點此去註冊';
@@ -197,7 +200,7 @@
                 return;
             }
 
-            const isLogin = document.getElementById('auth-title').innerText === '仙女小金庫 1.2 登入';
+            const isLogin = document.getElementById('auth-title').innerText === '仙女小金庫 1.3 登入';
             try {
                 if (isLogin) {
                     await signInWithEmailAndPassword(auth, email, password);
@@ -266,18 +269,39 @@
         // --- 核心計算模組（加入日期防呆處理） ---
         function getCompiledMonthlyData() {
             const monthlyData = {};
+
+            const createEmptyMonth = () => ({
+                rev: 0,
+                cost: 0,
+                pro: 0,
+                items: {},
+                levelRevenue: Object.fromEntries(SALES_LEVELS.map(level => [level, 0])),
+                uncategorizedRevenue: 0
+            });
+
             sales.forEach(s => {
                 // 防呆：避免因資料庫舊資料無 date 欄位導致 substring 觸發報錯崩潰
                 const m = s.date ? s.date.substring(0, 7) : '未知月份';
-                if(!monthlyData[m]) monthlyData[m] = { rev: 0, cost: 0, pro: 0, items: {} };
-                monthlyData[m].rev += (Number(s.sellPrice || 0) * Number(s.qty || 0));
+                if(!monthlyData[m]) monthlyData[m] = createEmptyMonth();
+
+                const saleAmount = Number(s.sellPrice || 0) * Number(s.qty || 0);
+                const saleLevel = s.customerLevel || '';
+
+                monthlyData[m].rev += saleAmount;
                 monthlyData[m].pro += Number(s.profit || 0);
                 monthlyData[m].items[s.product] = (monthlyData[m].items[s.product] || 0) + Number(s.qty || 0);
+
+                if (SALES_LEVELS.includes(saleLevel)) {
+                    monthlyData[m].levelRevenue[saleLevel] += saleAmount;
+                } else if (saleLevel !== '贈品') {
+                    // 舊資料若沒有 customerLevel，仍保留在總銷貨與未分類欄位中
+                    monthlyData[m].uncategorizedRevenue += saleAmount;
+                }
             });
             purchases.forEach(p => {
                 // 防呆處理
                 const m = p.date ? p.date.substring(0, 7) : '未知月份';
-                if(!monthlyData[m]) monthlyData[m] = { rev: 0, cost: 0, pro: 0, items: {} };
+                if(!monthlyData[m]) monthlyData[m] = createEmptyMonth();
                 monthlyData[m].cost += Number(p.totalCost || 0);
             });
             return Object.entries(monthlyData).sort((a,b) => b[0].localeCompare(a[0]));
@@ -299,7 +323,17 @@
         // --- 下載 Excel CSV 檔案 (已修正 iOS Safari 衝突與延遲問題) ---
         window.triggerCSVExport = function() {
             const compiled = getCompiledMonthlyData();
-            let csvContent = "月份,總銷售營業額,總進貨支出成本,預估淨利潤,熱銷商品與件數\n";
+            const headers = [
+                "月份",
+                "總銷售營業額",
+                ...SALES_LEVELS.map(level => `${level}銷貨金額`),
+                "未分類銷貨金額",
+                "總進貨支出成本",
+                "預估淨利潤",
+                "熱銷商品與件數"
+            ];
+            const escapeCSV = value => `"${String(value ?? '').replace(/"/g, '""')}"`;
+            let csvContent = headers.map(escapeCSV).join(",") + "\n";
 
             compiled.forEach(([month, data]) => {
                 const topItemsStr = Object.entries(data.items)
@@ -307,8 +341,16 @@
                     .map(([name, qty]) => `${name}(${qty}件)`)
                     .join(" | ");
 
-                // 防止內容包含雙引號破壞 CSV 格式
-                csvContent += `"${month}",${data.rev},${data.cost},${data.pro},"${topItemsStr.replace(/"/g, '""')}"\n`;
+                const row = [
+                    month,
+                    data.rev,
+                    ...SALES_LEVELS.map(level => data.levelRevenue[level] || 0),
+                    data.uncategorizedRevenue || 0,
+                    data.cost,
+                    data.pro,
+                    topItemsStr
+                ];
+                csvContent += row.map(escapeCSV).join(",") + "\n";
             });
 
             // 使用 Uint8Array 建立 BOM，確保 iOS Safari 也能正確識別編碼
@@ -348,6 +390,13 @@
                 text += `【 📅 ${month} 財富戰報 】\n`;
                 text += `🌸 預估淨利：+$${data.pro.toLocaleString()} TWD\n`;
                 text += `🛍️ 總銷售額：$${data.rev.toLocaleString()} TWD\n`;
+                text += `💗 各級別銷貨：\n`;
+                SALES_LEVELS.forEach(level => {
+                    text += `   ・${level}：$${(data.levelRevenue[level] || 0).toLocaleString()} TWD\n`;
+                });
+                if (data.uncategorizedRevenue > 0) {
+                    text += `   ・未分類：$${data.uncategorizedRevenue.toLocaleString()} TWD\n`;
+                }
                 text += `📦 進貨支出：$${data.cost.toLocaleString()} TWD\n`;
                 
                 const mTop = Object.entries(data.items).sort((a,b) => b[1] - a[1]).slice(0, 3);
@@ -430,6 +479,23 @@
                     <div class="grid grid-cols-2 gap-2 text-[10px] font-bold text-slate-400">
                         <span>總銷: <b class="text-slate-600">$${d.rev.toLocaleString()}</b></span>
                         <span>總進: <b class="text-orange-400">$${d.cost.toLocaleString()}</b></span>
+                    </div>
+                    <div class="pt-2 space-y-2">
+                        <div class="text-[8px] font-black text-slate-300 uppercase">各級別銷貨金額</div>
+                        <div class="grid grid-cols-2 gap-x-3 gap-y-2">
+                            ${SALES_LEVELS.map(level => `
+                                <div class="flex justify-between items-center bg-pink-50/60 rounded-xl px-3 py-2 text-[10px]">
+                                    <span class="font-bold text-slate-500">${level}</span>
+                                    <span class="font-black text-[#FD85AB]">$${(d.levelRevenue[level] || 0).toLocaleString()}</span>
+                                </div>
+                            `).join('')}
+                            ${d.uncategorizedRevenue > 0 ? `
+                                <div class="col-span-2 flex justify-between items-center bg-amber-50 rounded-xl px-3 py-2 text-[10px]">
+                                    <span class="font-bold text-amber-600">未分類（舊資料）</span>
+                                    <span class="font-black text-amber-600">$${d.uncategorizedRevenue.toLocaleString()}</span>
+                                </div>
+                            ` : ''}
+                        </div>
                     </div>
                     <div class="pt-1 space-y-1">
                         <div class="text-[8px] font-black text-slate-300 uppercase">熱銷回顧</div>
@@ -715,7 +781,7 @@
                 <div class="w-20 h-20 bg-gradient-to-tr from-[#FD85AB] to-rose-400 rounded-full flex items-center justify-center mx-auto text-white shadow-lg animate-pulse mb-4">
                     <i data-lucide="sparkles" class="w-10 h-10"></i>
                 </div>
-                <h1 id="auth-title" class="text-3xl font-black text-[#FD85AB] tracking-tighter">仙女小金庫 1.2 登入</h1>
+                <h1 id="auth-title" class="text-3xl font-black text-[#FD85AB] tracking-tighter">仙女小金庫 1.3 登入</h1>
                 <p id="auth-desc" class="text-xs font-bold text-slate-400">輸入信箱與密碼，即可立刻登入雲端金庫！</p>
             </div>
 
@@ -756,7 +822,7 @@
             
             <section id="home" class="p-6 pb-44 space-y-6 flex-1 overflow-y-auto no-scrollbar">
                 <header class="flex justify-between items-center pt-2">
-                    <div><h1 class="text-3xl font-black text-[#FD85AB] tracking-tighter">仙女小金庫1.2</h1><p class="text-[10px] font-bold text-slate-300 uppercase mt-1 tracking-widest">FAIRY MONEY PRO</p></div>
+                    <div><h1 class="text-3xl font-black text-[#FD85AB] tracking-tighter">仙女小金庫1.3</h1><p class="text-[10px] font-bold text-slate-300 uppercase mt-1 tracking-widest">FAIRY MONEY PRO</p></div>
                     <button onclick="window.showTab('settings')" class="bg-pink-50 p-3 rounded-2xl text-[#FD85AB] hover:rotate-45 transition-transform"><i data-lucide="settings"></i></button>
                 </header>
 
