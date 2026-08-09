@@ -164,7 +164,6 @@
                 setupListeners();
             } else {
                 user = null;
-                // 取消先前的雲端監聽，防止權限衝突
                 if (unsubscribeSales) unsubscribeSales();
                 if (unsubscribePurchases) unsubscribePurchases();
                 if (unsubscribeInventory) unsubscribeInventory();
@@ -174,7 +173,6 @@
             }
         });
 
-        // 登入或註冊切換
         window.toggleAuthMode = function() {
             const isLogin = document.getElementById('auth-title').innerText === '仙女小金庫 1.2 登入';
             if (isLogin) {
@@ -190,7 +188,6 @@
             }
         };
 
-        // 執行登入或註冊
         window.handleAuthAction = async function() {
             const email = document.getElementById('auth-email').value.trim();
             const password = document.getElementById('auth-password').value;
@@ -223,7 +220,6 @@
             }
         };
 
-        // 訪客體驗登入 (保留匿名登入)
         window.handleGuestLogin = async function() {
             try {
                 await signInAnonymously(auth);
@@ -234,7 +230,6 @@
             }
         };
 
-        // 安全登出
         window.handleLogout = async function () {
             window.fairyConfirm("⚠️ 確定要登出當前帳號嗎？", async () => {
                 try {
@@ -253,7 +248,6 @@
             const inventoryRef = collection(db, 'artifacts', appId, 'users', user.uid, 'inventory');
             const profileRef = doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'profile');
 
-            // 監聽並保存監聽解綁變數，防止登出時發生權限洩漏
             unsubscribeSales = onSnapshot(salesRef, snap => { sales = snap.docs.map(d => ({id: d.id, ...d.data()})); renderDashboard(); if(!document.getElementById('record').classList.contains('hidden')) renderRecords(); }, (err) => console.error(err));
             unsubscribePurchases = onSnapshot(purchaseRef, snap => { purchases = snap.docs.map(d => ({id: d.id, ...d.data()})); renderDashboard(); if(!document.getElementById('record').classList.contains('hidden')) renderRecords(); }, (err) => console.error(err));
             unsubscribeInventory = onSnapshot(inventoryRef, snap => { inventory = snap.docs.map(d => ({id: d.id, ...d.data()})); renderInventory(); }, (err) => console.error(err));
@@ -269,25 +263,26 @@
             });
         }
 
-        // --- 核心計算模組（月度資料） ---
+        // --- 核心計算模組（加入日期防呆處理） ---
         function getCompiledMonthlyData() {
             const monthlyData = {};
             sales.forEach(s => {
-                const m = s.date.substring(0, 7);
+                // 防呆：避免因資料庫舊資料無 date 欄位導致 substring 觸發報錯崩潰
+                const m = s.date ? s.date.substring(0, 7) : '未知月份';
                 if(!monthlyData[m]) monthlyData[m] = { rev: 0, cost: 0, pro: 0, items: {} };
                 monthlyData[m].rev += (Number(s.sellPrice || 0) * Number(s.qty || 0));
                 monthlyData[m].pro += Number(s.profit || 0);
                 monthlyData[m].items[s.product] = (monthlyData[m].items[s.product] || 0) + Number(s.qty || 0);
             });
             purchases.forEach(p => {
-                const m = p.date.substring(0, 7);
+                // 防呆處理
+                const m = p.date ? p.date.substring(0, 7) : '未知月份';
                 if(!monthlyData[m]) monthlyData[m] = { rev: 0, cost: 0, pro: 0, items: {} };
                 monthlyData[m].cost += Number(p.totalCost || 0);
             });
             return Object.entries(monthlyData).sort((a,b) => b[0].localeCompare(a[0]));
         }
 
-        // --- 輸出彈窗控制 ---
         window.openExportModal = function() {
             const compiled = getCompiledMonthlyData();
             if (compiled.length === 0) {
@@ -301,11 +296,10 @@
             document.getElementById('export-modal').classList.add('hidden');
         };
 
-        // --- 下載 Excel CSV 檔案 ---
+        // --- 下載 Excel CSV 檔案 (已修正 iOS Safari 衝突與延遲問題) ---
         window.triggerCSVExport = function() {
             const compiled = getCompiledMonthlyData();
-            let csvContent = "\uFEFF"; 
-            csvContent += "月份,總銷售營業額,總進貨支出成本,預估淨利潤,熱銷商品與件數\n";
+            let csvContent = "月份,總銷售營業額,總進貨支出成本,預估淨利潤,熱銷商品與件數\n";
 
             compiled.forEach(([month, data]) => {
                 const topItemsStr = Object.entries(data.items)
@@ -313,23 +307,36 @@
                     .map(([name, qty]) => `${name}(${qty}件)`)
                     .join(" | ");
 
-                csvContent += `"${month}",${data.rev},${data.cost},${data.pro},"${topItemsStr}"\n`;
+                // 防止內容包含雙引號破壞 CSV 格式
+                csvContent += `"${month}",${data.rev},${data.cost},${data.pro},"${topItemsStr.replace(/"/g, '""')}"\n`;
             });
 
-            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            // 使用 Uint8Array 建立 BOM，確保 iOS Safari 也能正確識別編碼
+            const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
+            const blob = new Blob([bom, csvContent], { type: 'text/csv;charset=utf-8' });
             const url = URL.createObjectURL(blob);
+            
             const link = document.createElement("a");
             link.setAttribute("href", url);
             link.setAttribute("download", `仙女小金庫_月報歷史回顧_${new Date().toISOString().split('T')[0]}.csv`);
+            // 移除 target="_blank" 避免與 download 屬性衝突
+            link.style.display = 'none';
+            
             document.body.appendChild(link);
             link.click();
-            document.body.removeChild(link);
+            
+            // 延遲移除 DOM 元素，確保下載機制有足夠時間響應 (改為 500ms)
+            setTimeout(() => {
+                if (document.body.contains(link)) {
+                    document.body.removeChild(link);
+                }
+                URL.revokeObjectURL(url); // 釋放記憶體
+            }, 500);
             
             fairyToast("月報 CSV 下載完成！📊");
             window.closeExportModal();
         };
 
-        // --- 複製 LINE 格式純文字 ---
         window.triggerTextCopy = function() {
             const compiled = getCompiledMonthlyData();
             
@@ -376,9 +383,7 @@
             window.closeExportModal();
         };
 
-        // --- 渲染：首頁 ---
         function renderDashboard() {
-            // 防丟失黃色警告卡片邏輯 (如果使用者是匿名登入，顯示警告)
             const warningBanner = document.getElementById('guest-warning-banner');
             if (user && user.isAnonymous) {
                 warningBanner.classList.remove('hidden');
@@ -411,21 +416,9 @@
                 </div>
             `).join('') : '<div class="text-center py-4 text-slate-300 italic text-xs">目前暫無銷售</div>';
 
-            const monthlyData = {};
-            sales.forEach(s => {
-                const m = s.date.substring(0, 7);
-                if(!monthlyData[m]) monthlyData[m] = { rev: 0, cost: 0, pro: 0, items: {} };
-                monthlyData[m].rev += (Number(s.sellPrice || 0) * Number(s.qty || 0));
-                monthlyData[m].pro += Number(s.profit || 0);
-                monthlyData[m].items[s.product] = (monthlyData[m].items[s.product] || 0) + Number(s.qty || 0);
-            });
-            purchases.forEach(p => {
-                const m = p.date.substring(0, 7);
-                if(!monthlyData[m]) monthlyData[m] = { rev: 0, cost: 0, pro: 0, items: {} };
-                monthlyData[m].cost += Number(p.totalCost || 0);
-            });
-
-            const sortedMonths = Object.entries(monthlyData).sort((a,b) => b[0].localeCompare(a[0])).slice(0, 6);
+            const monthlyData = getCompiledMonthlyData(); // 改呼叫修正後的函式
+            const sortedMonths = monthlyData.slice(0, 6);
+            
             document.getElementById('dash-history').innerHTML = sortedMonths.map(([m, d]) => {
                 const mTop5 = Object.entries(d.items).sort((a,b) => b[1] - a[1]).slice(0, 5);
                 return `
@@ -446,7 +439,6 @@
             }).join('');
         }
 
-        // --- 渲染：價格對照表 ---
         window.renderPriceList = function() {
             const levels = ["零售", "1+1", "VIP", "實習", "三級零售", "三級加盟", "二級", "一級", "皇家"];
             const currs = ["TWD", "MOP", "HKD"];
@@ -464,7 +456,6 @@
         window.changePriceViewLevel = (l) => { priceViewLevel = l; renderPriceList(); };
         window.changePriceViewCurr = (c) => { priceViewCurr = c; renderPriceList(); };
 
-        // --- 渲染：庫存 ---
         window.renderInventory = function() {
             let totalVal = 0;
             document.getElementById('inv-grid').innerHTML = Object.keys(PRODUCT_DATA).map(p => {
@@ -492,7 +483,6 @@
             document.getElementById('inv-total-value').innerText = `$${totalVal.toLocaleString()}`;
         };
 
-        // --- 渲染：銷貨 ---
         window.renderSales = function() {
             const level = document.getElementById('sale-level').value;
             const currency = document.getElementById('sale-curr').value;
@@ -563,7 +553,6 @@
             showTab('home');
         };
 
-        // --- 渲染：進貨 ---
         window.renderPurchase = function() {
             const level = document.getElementById('pur-level').value;
             const currency = document.getElementById('pur-curr').value;
@@ -620,7 +609,6 @@
             showTab('home');
         };
 
-        // --- 渲染：歷史紀錄 ---
         window.handleSearch = function(val) {
             searchQuery = val.toLowerCase();
             renderRecords();
@@ -631,7 +619,7 @@
             const groups = {};
             all.forEach(item => {
                 const gid = String(item.batchId || item.id);
-                if(!groups[gid]) groups[gid] = { id: gid, date: item.date, name: item.customerName || '補貨紀錄', type: item.type, level: item.customerLevel || item.sourceLevel || '-', items: [], total: 0, profit: 0, rawItems: [] };
+                if(!groups[gid]) groups[gid] = { id: gid, date: item.date || '-', name: item.customerName || '補貨紀錄', type: item.type, level: item.customerLevel || item.sourceLevel || '-', items: [], total: 0, profit: 0, rawItems: [] };
                 const subT = item.type === 'SALE' ? (item.sellPrice * item.qty) : (item.totalCost || 0);
                 groups[gid].items.push({ product: item.product, qty: item.qty, subT });
                 groups[gid].rawItems.push(item);
@@ -667,9 +655,7 @@
             lucide.createIcons();
         };
 
-        // --- 渲染：設定 ---
         window.renderSettings = function() {
-            // 在設定中顯示目前登入狀態
             const loginStatusDiv = document.getElementById('login-account-status');
             if (user) {
                 if (user.isAnonymous) {
@@ -724,7 +710,6 @@
 <body class="bg-[#FBFBFF]">
     <div class="max-w-md mx-auto min-h-screen relative shadow-2xl bg-white flex flex-col overflow-hidden">
         
-        <!-- ================== 雲端登入 / 註冊畫面 (新加入) ================== -->
         <section id="auth-screen" class="p-8 flex flex-col justify-center min-h-screen space-y-8 bg-gradient-to-br from-[#FFF0F5] to-white relative z-[100]">
             <div class="text-center space-y-2 mt-4">
                 <div class="w-20 h-20 bg-gradient-to-tr from-[#FD85AB] to-rose-400 rounded-full flex items-center justify-center mx-auto text-white shadow-lg animate-pulse mb-4">
@@ -767,17 +752,14 @@
             </div>
         </section>
 
-        <!-- ================== 小金庫主程式 Layout ================== -->
         <div id="app-main-layout" class="hidden flex flex-col flex-1">
             
-            <!-- 首頁 -->
             <section id="home" class="p-6 pb-44 space-y-6 flex-1 overflow-y-auto no-scrollbar">
                 <header class="flex justify-between items-center pt-2">
                     <div><h1 class="text-3xl font-black text-[#FD85AB] tracking-tighter">仙女小金庫1.2</h1><p class="text-[10px] font-bold text-slate-300 uppercase mt-1 tracking-widest">FAIRY MONEY PRO</p></div>
                     <button onclick="window.showTab('settings')" class="bg-pink-50 p-3 rounded-2xl text-[#FD85AB] hover:rotate-45 transition-transform"><i data-lucide="settings"></i></button>
                 </header>
 
-                <!-- 訪客警示看板 (新加入) -->
                 <div id="guest-warning-banner" class="hidden bg-amber-50 border border-amber-100 p-4 rounded-3xl flex items-center gap-3 text-amber-700 animate-pulse">
                     <i data-lucide="shield-alert" class="w-5 h-5 flex-shrink-0 text-amber-500"></i>
                     <span class="text-[10px] font-bold leading-relaxed">⚠️ 目前為臨時訪客模式，換手機資料會遺失。建議立即到「個人設定」註冊永久雲端帳號！</span>
@@ -811,7 +793,6 @@
                     <div id="dash-top5" class="space-y-3"></div>
                 </div>
                 
-                <!-- 月報歷史回顧 -->
                 <div class="space-y-4">
                     <div class="flex justify-between items-center">
                         <h3 class="text-xs font-black text-slate-400 uppercase flex items-center gap-2 tracking-widest">
@@ -825,7 +806,6 @@
                 </div>
             </section>
 
-            <!-- 價格對照表 -->
             <section id="pricelist" class="p-6 pb-44 space-y-5 hidden flex-1 overflow-y-auto no-scrollbar animate-in fade-in">
                 <h2 class="text-2xl font-black text-center text-slate-800 tracking-tight">產品價格對照表</h2>
                 <div class="bg-white p-5 rounded-3xl card-shadow border border-slate-50 space-y-4 sticky top-0 z-20">
@@ -835,7 +815,6 @@
                 <div id="price-grid" class="space-y-3"></div>
             </section>
 
-            <!-- 銷貨 -->
             <section id="sales" class="p-6 pb-44 space-y-5 hidden flex-1 overflow-y-auto no-scrollbar animate-in fade-in">
                 <h2 class="text-2xl font-black text-center text-[#FD85AB] tracking-tight">仙女銷貨</h2>
                 <div class="bg-white p-6 rounded-[2.5rem] card-shadow border border-pink-50 space-y-4">
@@ -871,7 +850,6 @@
                 </div>
             </section>
 
-            <!-- 進貨 -->
             <section id="purchase" class="p-6 pb-44 space-y-5 hidden flex-1 overflow-y-auto no-scrollbar animate-in fade-in">
                 <h2 class="text-2xl font-black text-center text-[#60D3C2] tracking-tight">仙女進貨</h2>
                 <div class="bg-white p-6 rounded-[2.5rem] card-shadow border border-emerald-50 space-y-4">
@@ -900,7 +878,6 @@
                 </div>
             </section>
 
-            <!-- 歷史紀錄 -->
             <section id="record" class="p-6 pb-44 space-y-6 hidden flex-1 overflow-y-auto no-scrollbar animate-in fade-in">
                 <h2 class="text-2xl font-black text-center text-slate-800 tracking-tight">歷史明細紀錄</h2>
                 <div class="relative">
@@ -910,7 +887,6 @@
                 <div id="rec-list"></div>
             </section>
 
-            <!-- 庫存 -->
             <section id="inventory" class="p-6 pb-44 space-y-6 hidden flex-1 overflow-y-auto no-scrollbar animate-in fade-in">
                 <h2 class="text-2xl font-black text-center text-slate-800 tracking-tight">現貨庫存監控</h2>
                 <div class="bg-slate-900 p-7 rounded-[2.5rem] text-white shadow-xl flex justify-between items-center mb-6">
@@ -920,12 +896,10 @@
                 <div id="inv-grid" class="grid grid-cols-2 gap-3"></div>
             </section>
 
-            <!-- 設定 -->
             <section id="settings" class="p-6 pb-44 space-y-7 hidden flex-1 overflow-y-auto no-scrollbar animate-in fade-in">
                 <h2 class="text-2xl font-black text-center text-slate-800 tracking-tight">個人設定</h2>
                 
                 <div class="bg-white p-8 rounded-[3rem] card-shadow border border-slate-50 space-y-6">
-                    <!-- 雲端帳號綁定狀態 (新加入) -->
                     <div>
                         <label class="text-[10px] font-black text-slate-400 uppercase block mb-3 tracking-widest">雲端帳號同步狀態</label>
                         <div id="login-account-status"></div>
@@ -937,14 +911,12 @@
                     
                     <button onclick="window.saveProfile()" class="w-full py-5 bg-slate-900 text-white rounded-[2rem] font-black shadow-xl flex items-center justify-center gap-2 active:scale-95 transition-all">儲存並同步設定 💾</button>
                     
-                    <!-- 安全登出按鈕 (新加入) -->
                     <button onclick="window.handleLogout()" class="w-full py-4 border border-red-200 text-red-500 hover:bg-red-50 rounded-[2rem] font-black text-xs transition-all active:scale-95">
                         🚪 安全登出當前帳號
                     </button>
                 </div>
             </section>
 
-            <!-- 導覽列 -->
             <nav class="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white/95 backdrop-blur-xl border-t border-slate-100 flex justify-around py-4 px-2 pb-[calc(1.5rem+env(safe-area-inset-bottom))] z-50 rounded-t-[3rem] shadow-[0_-15px_50px_rgba(0,0,0,0.06)]">
                 <button onclick="window.showTab('home')" class="nav-btn flex flex-col items-center gap-1 text-[#FD85AB] group" data-tab="home"><div class="icon-bg p-2 rounded-2xl bg-pink-50 transition-all group-hover:scale-110"><i data-lucide="layout-dashboard" class="w-5 h-5"></i></div><span class="text-[8px] font-black uppercase tracking-tighter">首頁</span></button>
                 <button onclick="window.showTab('pricelist')" class="nav-btn flex flex-col items-center gap-1 text-slate-300 group" data-tab="pricelist"><div class="icon-bg p-2 rounded-2xl transition-all group-hover:scale-110"><i data-lucide="tag" class="w-5 h-5"></i></div><span class="text-[8px] font-black uppercase tracking-tighter">價格</span></button>
@@ -956,7 +928,6 @@
 
         </div>
 
-        <!-- 輸出報表方式彈窗 -->
         <div id="export-modal" class="fixed inset-0 z-[300] flex items-center justify-center bg-black/40 backdrop-blur-sm hidden">
             <div class="bg-white w-[85%] max-w-sm rounded-[3rem] p-8 shadow-2xl space-y-6 animate-in zoom-in-95 duration-200">
                 <div class="text-center space-y-2">
@@ -980,7 +951,6 @@
             </div>
         </div>
 
-        <!-- 確認視窗 -->
         <div id="confirm-modal" class="fixed inset-0 z-[300] flex items-center justify-center bg-black/40 backdrop-blur-sm hidden">
             <div class="bg-white w-[85%] max-w-sm rounded-[3rem] p-8 shadow-2xl space-y-6 animate-in zoom-in-95 duration-200">
                 <div class="text-center space-y-2">
@@ -995,7 +965,6 @@
             </div>
         </div>
 
-        <!-- 吐司通知 -->
         <div id="fairy-toast" class="fixed top-8 left-1/2 -translate-x-1/2 z-[500] w-[80%] hidden animate-in slide-in-from-top-10 duration-500">
             <div class="bg-slate-900 text-white p-4 rounded-3xl shadow-2xl flex items-center justify-center gap-3">
                 <i data-lucide="sparkles" class="w-5 h-5 text-yellow-400"></i><span id="toast-msg" class="text-sm font-black"></span>
@@ -1004,4 +973,3 @@
     </div>
 </body>
 </html>
-
