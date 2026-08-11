@@ -81,6 +81,24 @@
         let unsubscribeInventory = null;
 
         window.tempBatchStore = {};
+// --- 銷售結構分類 ---
+
+// 銷貨給客人：零售、VIP、1+1
+const CUSTOMER_SALES_LEVELS = [
+    "零售",
+    "1+1",
+    "VIP"
+];
+
+// 銷貨給分店加盟
+const BRANCH_SALES_LEVELS = [
+    "實習",
+    "三級零售",
+    "三級加盟",
+    "二級",
+    "一級",
+    "皇家"
+];
 
         // --- 通知與彈窗 ---
         window.fairyToast = function(msg) {
@@ -270,14 +288,22 @@
         function getCompiledMonthlyData() {
             const monthlyData = {};
 
-            const createEmptyMonth = () => ({
-                rev: 0,
-                cost: 0,
-                pro: 0,
-                items: {},
-                levelRevenue: Object.fromEntries(SALES_LEVELS.map(level => [level, 0])),
-                uncategorizedRevenue: 0
-            });
+          const createEmptyMonth = () => ({
+    rev: 0,
+    cost: 0,
+    pro: 0,
+    items: {},
+
+    levelRevenue: Object.fromEntries(
+        SALES_LEVELS.map(level => [level, 0])
+    ),
+
+    uncategorizedRevenue: 0,
+
+    // 銷售結構
+    customerSalesRevenue: 0,
+    branchSalesRevenue: 0
+});
 
             sales.forEach(s => {
                 // 防呆：避免因資料庫舊資料無 date 欄位導致 substring 觸發報錯崩潰
@@ -292,11 +318,40 @@
                 monthlyData[m].items[s.product] = (monthlyData[m].items[s.product] || 0) + Number(s.qty || 0);
 
                 if (SALES_LEVELS.includes(saleLevel)) {
-                    monthlyData[m].levelRevenue[saleLevel] += saleAmount;
-                } else if (saleLevel !== '贈品') {
-                    // 舊資料若沒有 customerLevel，仍保留在總銷貨與未分類欄位中
-                    monthlyData[m].uncategorizedRevenue += saleAmount;
-                }
+
+    // 各級別銷貨金額
+    monthlyData[m].levelRevenue[saleLevel] += saleAmount;
+
+
+    // ==========================
+    // 銷貨給客人
+    // 零售 + 1+1 + VIP
+    // ==========================
+    if (CUSTOMER_SALES_LEVELS.includes(saleLevel)) {
+
+        monthlyData[m].customerSalesRevenue += saleAmount;
+
+    }
+
+
+    // ==========================
+    // 銷貨給分店加盟
+    // 實習 + 三級零售 + 三級加盟
+    // + 二級 + 一級 + 皇家
+    // ==========================
+    if (BRANCH_SALES_LEVELS.includes(saleLevel)) {
+
+        monthlyData[m].branchSalesRevenue += saleAmount;
+
+    }
+
+
+} else if (saleLevel !== '贈品') {
+
+    // 舊資料如果沒有 customerLevel
+    monthlyData[m].uncategorizedRevenue += saleAmount;
+
+}
             });
             purchases.forEach(p => {
                 // 防呆處理
@@ -321,63 +376,258 @@
         };
 
         // --- 下載 Excel CSV 檔案 (已修正 iOS Safari 衝突與延遲問題) ---
-        window.triggerCSVExport = function() {
-            const compiled = getCompiledMonthlyData();
-            const headers = [
-                "月份",
-                "總銷售營業額",
-                ...SALES_LEVELS.map(level => `${level}銷貨金額`),
-                "未分類銷貨金額",
-                "總進貨支出成本",
-                "預估淨利潤",
-                "熱銷商品與件數"
-            ];
-            const escapeCSV = value => `"${String(value ?? '').replace(/"/g, '""')}"`;
-            let csvContent = headers.map(escapeCSV).join(",") + "\n";
+       window.triggerCSVExport = function() {
 
-            compiled.forEach(([month, data]) => {
-                const topItemsStr = Object.entries(data.items)
-                    .sort((a, b) => b[1] - a[1])
-                    .map(([name, qty]) => `${name}(${qty}件)`)
-                    .join(" | ");
+    const compiled = getCompiledMonthlyData();
 
-                const row = [
-                    month,
-                    data.rev,
-                    ...SALES_LEVELS.map(level => data.levelRevenue[level] || 0),
-                    data.uncategorizedRevenue || 0,
-                    data.cost,
-                    data.pro,
-                    topItemsStr
-                ];
-                csvContent += row.map(escapeCSV).join(",") + "\n";
-            });
 
-            // 使用 Uint8Array 建立 BOM，確保 iOS Safari 也能正確識別編碼
-            const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
-            const blob = new Blob([bom, csvContent], { type: 'text/csv;charset=utf-8' });
-            const url = URL.createObjectURL(blob);
-            
-            const link = document.createElement("a");
-            link.setAttribute("href", url);
-            link.setAttribute("download", `仙女小金庫_月報歷史回顧_${new Date().toISOString().split('T')[0]}.csv`);
-            // 移除 target="_blank" 避免與 download 屬性衝突
-            link.style.display = 'none';
-            
-            document.body.appendChild(link);
-            link.click();
-            
-            // 延遲移除 DOM 元素，確保下載機制有足夠時間響應 (改為 500ms)
-            setTimeout(() => {
-                if (document.body.contains(link)) {
-                    document.body.removeChild(link);
-                }
-                URL.revokeObjectURL(url); // 釋放記憶體
-            }, 500);
-            
-            fairyToast("月報 CSV 下載完成！📊");
-            window.closeExportModal();
-        };
+    // ==========================
+    // CSV 標題
+    // ==========================
+
+    const headers = [
+
+        "月份",
+
+        "總銷售營業額",
+
+        "銷貨給客人金額",
+        "銷貨給客人占比",
+
+        "銷貨給分店加盟金額",
+        "銷貨給分店加盟占比",
+
+        ...SALES_LEVELS.map(
+            level => `${level}銷貨金額`
+        ),
+
+        "未分類銷貨金額",
+
+        "總進貨支出成本",
+
+        "預估淨利潤",
+
+        "熱銷商品與件數"
+    ];
+
+
+    const escapeCSV = value =>
+        `"${String(value ?? '').replace(/"/g, '""')}"`;
+
+
+    let csvContent =
+        headers.map(escapeCSV).join(",") + "\n";
+
+
+
+    // ==========================
+    // 每個月份
+    // ==========================
+
+    compiled.forEach(([month, data]) => {
+
+
+        // 熱銷商品
+        const topItemsStr =
+            Object.entries(data.items)
+
+                .sort((a, b) => b[1] - a[1])
+
+                .map(
+                    ([name, qty]) =>
+                    `${name}(${qty}件)`
+                )
+
+                .join(" | ");
+
+
+
+        // ==========================
+        // 銷售結構
+        // ==========================
+
+        const classifiedRevenue =
+            (data.customerSalesRevenue || 0) +
+            (data.branchSalesRevenue || 0);
+
+
+
+        // 銷貨給客人 %
+        const customerPercent =
+
+            classifiedRevenue > 0
+
+                ? (
+                    (data.customerSalesRevenue || 0)
+                    / classifiedRevenue
+                    * 100
+                )
+
+                : 0;
+
+
+
+        // 銷貨給分店加盟 %
+        const branchPercent =
+
+            classifiedRevenue > 0
+
+                ? (
+                    (data.branchSalesRevenue || 0)
+                    / classifiedRevenue
+                    * 100
+                )
+
+                : 0;
+
+
+
+        // ==========================
+        // CSV 每一列
+        // ==========================
+
+        const row = [
+
+            month,
+
+            data.rev,
+
+
+            // 銷貨給客人
+            data.customerSalesRevenue || 0,
+
+            `${customerPercent.toFixed(1)}%`,
+
+
+            // 銷貨給分店加盟
+            data.branchSalesRevenue || 0,
+
+            `${branchPercent.toFixed(1)}%`,
+
+
+            // 每個級別完整保留
+            ...SALES_LEVELS.map(
+                level =>
+                    data.levelRevenue[level] || 0
+            ),
+
+
+            // 未分類
+            data.uncategorizedRevenue || 0,
+
+
+            // 進貨
+            data.cost,
+
+
+            // 淨利
+            data.pro,
+
+
+            // 熱銷
+            topItemsStr
+        ];
+
+
+        csvContent +=
+            row.map(escapeCSV).join(",") + "\n";
+
+    });
+
+
+
+    // ==========================
+    // UTF-8 BOM
+    // 避免 Excel 中文亂碼
+    // ==========================
+
+    const bom =
+        new Uint8Array([
+            0xEF,
+            0xBB,
+            0xBF
+        ]);
+
+
+    const blob =
+        new Blob(
+
+            [
+                bom,
+                csvContent
+            ],
+
+            {
+                type: 'text/csv;charset=utf-8'
+            }
+
+        );
+
+
+    const url =
+        URL.createObjectURL(blob);
+
+
+
+    const link =
+        document.createElement("a");
+
+
+    link.setAttribute(
+        "href",
+        url
+    );
+
+
+    link.setAttribute(
+
+        "download",
+
+        `仙女小金庫_月報歷史回顧_${
+            new Date()
+                .toISOString()
+                .split('T')[0]
+        }.csv`
+
+    );
+
+
+    link.style.display = 'none';
+
+
+    document.body.appendChild(link);
+
+
+    link.click();
+
+
+
+    // 延遲移除，避免 iPhone Safari 無法下載
+    setTimeout(() => {
+
+        if (
+            document.body.contains(link)
+        ) {
+
+            document.body.removeChild(link);
+
+        }
+
+
+        URL.revokeObjectURL(url);
+
+    }, 500);
+
+
+
+    fairyToast(
+        "完整銷售結構月報 CSV 下載完成！📊"
+    );
+
+
+    window.closeExportModal();
+
+};
 
         window.triggerTextCopy = function() {
     const compiled = getCompiledMonthlyData();
@@ -519,6 +769,91 @@
                         <span>總銷: <b class="text-slate-600">$${d.rev.toLocaleString()}</b></span>
                         <span>總進: <b class="text-orange-400">$${d.cost.toLocaleString()}</b></span>
                     </div>
+
+<!-- 銷售結構分析 -->
+<div class="pt-2 space-y-2">
+
+    <div class="text-[8px] font-black text-slate-300 uppercase">
+        銷售結構分析
+    </div>
+
+    ${(() => {
+
+        const classifiedRevenue =
+            (d.customerSalesRevenue || 0) +
+            (d.branchSalesRevenue || 0);
+
+        const customerPercent =
+            classifiedRevenue > 0
+                ? ((d.customerSalesRevenue || 0) / classifiedRevenue * 100)
+                : 0;
+
+        const branchPercent =
+            classifiedRevenue > 0
+                ? ((d.branchSalesRevenue || 0) / classifiedRevenue * 100)
+                : 0;
+
+        return `
+
+        <div class="bg-slate-50 rounded-2xl p-4 space-y-4">
+
+            <div class="space-y-1">
+                <div class="flex justify-between items-center">
+                    <span class="text-[10px] font-black text-slate-600">
+                        🛍️ 銷貨給客人
+                    </span>
+
+                    <span class="text-[10px] font-black text-[#FD85AB]">
+                        $${(d.customerSalesRevenue || 0).toLocaleString()}
+                        · ${customerPercent.toFixed(1)}%
+                    </span>
+                </div>
+
+                <div class="w-full h-2 bg-white rounded-full overflow-hidden">
+                    <div
+                        class="h-full bg-[#FD85AB] rounded-full"
+                        style="width:${customerPercent}%"
+                    ></div>
+                </div>
+
+                <div class="text-[8px] text-slate-400">
+                    零售・1+1・VIP
+                </div>
+            </div>
+
+
+            <div class="space-y-1">
+                <div class="flex justify-between items-center">
+                    <span class="text-[10px] font-black text-slate-600">
+                        🤝 銷貨給分店加盟
+                    </span>
+
+                    <span class="text-[10px] font-black text-violet-500">
+                        $${(d.branchSalesRevenue || 0).toLocaleString()}
+                        · ${branchPercent.toFixed(1)}%
+                    </span>
+                </div>
+
+                <div class="w-full h-2 bg-white rounded-full overflow-hidden">
+                    <div
+                        class="h-full bg-violet-400 rounded-full"
+                        style="width:${branchPercent}%"
+                    ></div>
+                </div>
+
+                <div class="text-[8px] text-slate-400">
+                    實習・三級零售・三級加盟・二級・一級・皇家
+                </div>
+            </div>
+
+        </div>
+
+        `;
+
+    })()}
+
+</div>
+
                     <div class="pt-2 space-y-2">
                         <div class="text-[8px] font-black text-slate-300 uppercase">各級別銷貨金額</div>
                         <div class="grid grid-cols-2 gap-x-3 gap-y-2">
