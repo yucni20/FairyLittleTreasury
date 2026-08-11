@@ -302,7 +302,11 @@ const BRANCH_SALES_LEVELS = [
 
     // 銷售結構
     customerSalesRevenue: 0,
-    branchSalesRevenue: 0
+    branchSalesRevenue: 0,
+
+    // 銷售結構淨利
+    customerSalesProfit: 0,
+    branchSalesProfit: 0
 });
 
             sales.forEach(s => {
@@ -327,11 +331,13 @@ const BRANCH_SALES_LEVELS = [
     // 銷貨給客人
     // 零售 + 1+1 + VIP
     // ==========================
-    if (CUSTOMER_SALES_LEVELS.includes(saleLevel)) {
+   if (CUSTOMER_SALES_LEVELS.includes(saleLevel)) {
 
-        monthlyData[m].customerSalesRevenue += saleAmount;
+    monthlyData[m].customerSalesRevenue += saleAmount;
 
-    }
+    monthlyData[m].customerSalesProfit += Number(s.profit || 0);
+
+}
 
 
     // ==========================
@@ -341,9 +347,11 @@ const BRANCH_SALES_LEVELS = [
     // ==========================
     if (BRANCH_SALES_LEVELS.includes(saleLevel)) {
 
-        monthlyData[m].branchSalesRevenue += saleAmount;
+    monthlyData[m].branchSalesRevenue += saleAmount;
 
-    }
+    monthlyData[m].branchSalesProfit += Number(s.profit || 0);
+
+}
 
 
 } else if (saleLevel !== '贈品') {
@@ -387,28 +395,32 @@ const BRANCH_SALES_LEVELS = [
 
     const headers = [
 
-        "月份",
+    "月份",
 
-        "總銷售營業額",
+    "總銷售營業額",
 
-        "銷貨給客人金額",
-        "銷貨給客人占比",
+    "銷貨給客人金額",
+    "銷貨給客人占比",
+    "銷貨給客人淨利",
+    "銷貨給客人淨利率",
 
-        "銷貨給分店加盟金額",
-        "銷貨給分店加盟占比",
+    "銷貨給分店加盟金額",
+    "銷貨給分店加盟占比",
+    "銷貨給分店加盟淨利",
+    "銷貨給分店加盟淨利率",
 
-        ...SALES_LEVELS.map(
-            level => `${level}銷貨金額`
-        ),
+    ...SALES_LEVELS.map(
+        level => `${level}銷貨金額`
+    ),
 
-        "未分類銷貨金額",
+    "未分類銷貨金額",
 
-        "總進貨支出成本",
+    "總進貨支出成本",
 
-        "預估淨利潤",
+    "預估淨利潤",
 
-        "熱銷商品與件數"
-    ];
+    "熱銷商品與件數"
+];
 
 
     const escapeCSV = value =>
@@ -479,6 +491,30 @@ const BRANCH_SALES_LEVELS = [
                 )
 
                 : 0;
+// 銷貨給客人淨利率
+const customerProfitRate =
+    (data.customerSalesRevenue || 0) > 0
+
+        ? (
+            (data.customerSalesProfit || 0)
+            / data.customerSalesRevenue
+            * 100
+        )
+
+        : 0;
+
+
+// 銷貨給分店加盟淨利率
+const branchProfitRate =
+    (data.branchSalesRevenue || 0) > 0
+
+        ? (
+            (data.branchSalesProfit || 0)
+            / data.branchSalesRevenue
+            * 100
+        )
+
+        : 0;
 
 
 
@@ -488,45 +524,62 @@ const BRANCH_SALES_LEVELS = [
 
         const row = [
 
-            month,
+    month,
 
-            data.rev,
-
-
-            // 銷貨給客人
-            data.customerSalesRevenue || 0,
-
-            `${customerPercent.toFixed(1)}%`,
+    data.rev,
 
 
-            // 銷貨給分店加盟
-            data.branchSalesRevenue || 0,
+    // ==========================
+    // 銷貨給客人
+    // ==========================
 
-            `${branchPercent.toFixed(1)}%`,
+    data.customerSalesRevenue || 0,
 
+    `${customerPercent.toFixed(1)}%`,
 
-            // 每個級別完整保留
-            ...SALES_LEVELS.map(
-                level =>
-                    data.levelRevenue[level] || 0
-            ),
+    data.customerSalesProfit || 0,
 
-
-            // 未分類
-            data.uncategorizedRevenue || 0,
+    `${customerProfitRate.toFixed(1)}%`,
 
 
-            // 進貨
-            data.cost,
+    // ==========================
+    // 銷貨給分店加盟
+    // ==========================
+
+    data.branchSalesRevenue || 0,
+
+    `${branchPercent.toFixed(1)}%`,
+
+    data.branchSalesProfit || 0,
+
+    `${branchProfitRate.toFixed(1)}%`,
 
 
-            // 淨利
-            data.pro,
+    // ==========================
+    // 各級別銷貨
+    // ==========================
+
+    ...SALES_LEVELS.map(
+        level =>
+            data.levelRevenue[level] || 0
+    ),
 
 
-            // 熱銷
-            topItemsStr
-        ];
+    // 未分類
+    data.uncategorizedRevenue || 0,
+
+
+    // 進貨
+    data.cost,
+
+
+    // 全部銷貨總淨利
+    data.pro,
+
+
+    // 熱銷
+    topItemsStr
+];
 
 
         csvContent +=
@@ -770,81 +823,108 @@ const BRANCH_SALES_LEVELS = [
                         <span>總進: <b class="text-orange-400">$${d.cost.toLocaleString()}</b></span>
                     </div>
 
-<!-- 銷售結構分析 -->
+<!-- 利潤結構分析 -->
 <div class="pt-2 space-y-2">
 
     <div class="text-[8px] font-black text-slate-300 uppercase">
-        銷售結構分析
+     新版利潤分析
     </div>
 
     ${(() => {
 
-        const classifiedRevenue =
-            (d.customerSalesRevenue || 0) +
-            (d.branchSalesRevenue || 0);
+        // 已分類淨利
+        const classifiedProfit =
+            (d.customerSalesProfit || 0) +
+            (d.branchSalesProfit || 0);
 
-        const customerPercent =
-            classifiedRevenue > 0
-                ? ((d.customerSalesRevenue || 0) / classifiedRevenue * 100)
+
+        // 銷貨給客人占總利潤比例
+        const customerProfitPercent =
+            classifiedProfit !== 0
+                ? ((d.customerSalesProfit || 0) / classifiedProfit * 100)
                 : 0;
 
-        const branchPercent =
-            classifiedRevenue > 0
-                ? ((d.branchSalesRevenue || 0) / classifiedRevenue * 100)
+
+        // 銷貨給分店加盟占總利潤比例
+        const branchProfitPercent =
+            classifiedProfit !== 0
+                ? ((d.branchSalesProfit || 0) / classifiedProfit * 100)
                 : 0;
+
 
         return `
 
         <div class="bg-slate-50 rounded-2xl p-4 space-y-4">
 
+
+            <!-- 銷貨給客人 -->
             <div class="space-y-1">
+
                 <div class="flex justify-between items-center">
+
                     <span class="text-[10px] font-black text-slate-600">
                         🛍️ 銷貨給客人
                     </span>
 
                     <span class="text-[10px] font-black text-[#FD85AB]">
-                        $${(d.customerSalesRevenue || 0).toLocaleString()}
-                        · ${customerPercent.toFixed(1)}%
+                        淨利 $${(d.customerSalesProfit || 0).toLocaleString()}
+                        · ${customerProfitPercent.toFixed(1)}%
                     </span>
+
                 </div>
 
+
                 <div class="w-full h-2 bg-white rounded-full overflow-hidden">
+
                     <div
                         class="h-full bg-[#FD85AB] rounded-full"
-                        style="width:${customerPercent}%"
+                        style="width:${Math.max(0, customerProfitPercent)}%"
                     ></div>
+
                 </div>
+
 
                 <div class="text-[8px] text-slate-400">
                     零售・1+1・VIP
                 </div>
+
             </div>
 
 
+
+            <!-- 銷貨給分店加盟 -->
             <div class="space-y-1">
+
                 <div class="flex justify-between items-center">
+
                     <span class="text-[10px] font-black text-slate-600">
                         🤝 銷貨給分店加盟
                     </span>
 
                     <span class="text-[10px] font-black text-violet-500">
-                        $${(d.branchSalesRevenue || 0).toLocaleString()}
-                        · ${branchPercent.toFixed(1)}%
+                        淨利 $${(d.branchSalesProfit || 0).toLocaleString()}
+                        · ${branchProfitPercent.toFixed(1)}%
                     </span>
+
                 </div>
 
+
                 <div class="w-full h-2 bg-white rounded-full overflow-hidden">
+
                     <div
                         class="h-full bg-violet-400 rounded-full"
-                        style="width:${branchPercent}%"
+                        style="width:${Math.max(0, branchProfitPercent)}%"
                     ></div>
+
                 </div>
+
 
                 <div class="text-[8px] text-slate-400">
                     實習・三級零售・三級加盟・二級・一級・皇家
                 </div>
+
             </div>
+
 
         </div>
 
