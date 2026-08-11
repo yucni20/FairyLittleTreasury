@@ -458,39 +458,114 @@ const BRANCH_SALES_LEVELS = [
         // 銷售結構
         // ==========================
 
-        const classifiedRevenue =
-            (data.customerSalesRevenue || 0) +
-            (data.branchSalesRevenue || 0);
+    <!-- 利潤結構分析 -->
+<div class="pt-2 space-y-2">
+
+    <div class="text-[8px] font-black text-slate-300 uppercase">
+        利潤結構分析
+    </div>
+
+    ${(() => {
+
+        // 兩種銷售來源的淨利總和
+        const classifiedProfit =
+            (d.customerSalesProfit || 0) +
+            (d.branchSalesProfit || 0);
 
 
-
-        // 銷貨給客人 %
-        const customerPercent =
-
-            classifiedRevenue > 0
-
-                ? (
-                    (data.customerSalesRevenue || 0)
-                    / classifiedRevenue
-                    * 100
-                )
-
+        // 銷貨給客人：占總利潤比例
+        const customerProfitPercent =
+            classifiedProfit !== 0
+                ? ((d.customerSalesProfit || 0) / classifiedProfit * 100)
                 : 0;
 
 
-
-        // 銷貨給分店加盟 %
-        const branchPercent =
-
-            classifiedRevenue > 0
-
-                ? (
-                    (data.branchSalesRevenue || 0)
-                    / classifiedRevenue
-                    * 100
-                )
-
+        // 銷貨給分店加盟：占總利潤比例
+        const branchProfitPercent =
+            classifiedProfit !== 0
+                ? ((d.branchSalesProfit || 0) / classifiedProfit * 100)
                 : 0;
+
+
+        return `
+
+        <div class="bg-slate-50 rounded-2xl p-4 space-y-5">
+
+
+            <!-- 銷貨給客人 -->
+            <div class="space-y-2">
+
+                <div class="flex justify-between items-center">
+
+                    <span class="text-[10px] font-black text-slate-600">
+                        🛍️ 銷貨給客人
+                    </span>
+
+                    <span class="text-[10px] font-black text-[#FD85AB]">
+                        淨利 $${(d.customerSalesProfit || 0).toLocaleString()}
+                        · ${customerProfitPercent.toFixed(1)}%
+                    </span>
+
+                </div>
+
+
+                <div class="w-full h-2 bg-white rounded-full overflow-hidden">
+
+                    <div
+                        class="h-full bg-[#FD85AB] rounded-full"
+                        style="width:${Math.max(0, Math.min(customerProfitPercent, 100))}%"
+                    ></div>
+
+                </div>
+
+
+                <div class="text-[8px] text-slate-400">
+                    零售・1+1・VIP
+                </div>
+
+            </div>
+
+
+            <!-- 銷貨給分店加盟 -->
+            <div class="space-y-2">
+
+                <div class="flex justify-between items-center">
+
+                    <span class="text-[10px] font-black text-slate-600">
+                        🤝 銷貨給分店加盟
+                    </span>
+
+                    <span class="text-[10px] font-black text-violet-500">
+                        淨利 $${(d.branchSalesProfit || 0).toLocaleString()}
+                        · ${branchProfitPercent.toFixed(1)}%
+                    </span>
+
+                </div>
+
+
+                <div class="w-full h-2 bg-white rounded-full overflow-hidden">
+
+                    <div
+                        class="h-full bg-violet-400 rounded-full"
+                        style="width:${Math.max(0, Math.min(branchProfitPercent, 100))}%"
+                    ></div>
+
+                </div>
+
+
+                <div class="text-[8px] text-slate-400">
+                    實習・三級零售・三級加盟・二級・一級・皇家
+                </div>
+
+            </div>
+
+        </div>
+
+        `;
+
+    })()}
+
+</div>
 // 銷貨給客人淨利率
 const customerProfitRate =
     (data.customerSalesRevenue || 0) > 0
